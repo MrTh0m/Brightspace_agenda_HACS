@@ -1,12 +1,12 @@
 /**
- * Brightspace Agenda Card v1.3
+ * Brightspace Agenda Card v1.5
  * Options YAML :
  *   entity       : sensor.brightspace_agenda_evenements_a_venir  (requis)
  *   title        : "Brightspace Agenda"
  *   show_next    : true   — bandeau prochain événement (session ou atelier)
  *   show_stats   : true   — chiffres clés
  *   show_events  : true   — liste des événements
- *   stats        : [a_venir, individuels, collectifs, urgents]
+ *   stats        : [devoirs, individuels, collectifs, urgents]  (+ a_venir en option)
  *   app_url      : "https://..."   — lien pied de page + bouton Rejoindre
  */
 
@@ -20,25 +20,50 @@ const TYPE_META = {
   event:    { label: "Événement", color: "#888780", bg: "rgba(136,135,128,.12)",icon: "mdi:calendar" },
 };
 
+// Les 4 tuiles par défaut reprennent celles de l'app (devoirs non rendus).
+// a_venir (tous types d'événements confondus) reste disponible en option.
 const STAT_META = {
-  a_venir:     { label: "À venir",     color: "#6366f1" },
+  devoirs:     { label: "Devoirs",     color: "#6366f1" },
+  a_venir:     { label: "Événements",  color: "#888780" },
   individuels: { label: "Individuels", color: "#378ADD" },
   collectifs:  { label: "Collectifs",  color: "#639922" },
   urgents:     { label: "Urgents ≤7j", color: "#E24B4A" },
 };
 
-const ALL_STATS     = ["a_venir", "individuels", "collectifs", "urgents"];
-const DEFAULT_STATS = ALL_STATS;
+const ALL_STATS     = ["devoirs", "individuels", "collectifs", "urgents", "a_venir"];
+const DEFAULT_STATS = ["devoirs", "individuels", "collectifs", "urgents"];
+
+const DEVOIR_TYPE_META = {
+  individuel: { label: "Individuel", color: "#4f46e5", bg: "rgba(79,70,229,.12)" },
+  collectif:  { label: "Collectif",  color: "#0d6e4f", bg: "rgba(13,110,79,.12)" },
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Échappe le texte venant du calendrier ou de la config avant insertion en HTML
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// N'accepte que les liens http(s) pour app_url
+function safeUrl(u) {
+  return /^https?:\/\//i.test(u ?? "") ? u : "";
+}
+
+// Écart en jours calendaires (0 = aujourd'hui, 1 = demain), et non en tranches de 24 h
+function dayDiff(isoStr) {
+  const d   = new Date(isoStr);
+  const now = new Date();
+  const a = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const b = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.round((b - a) / 86400000);
+}
 
 function fmtDate(isoStr) {
   if (!isoStr) return "";
   const d = new Date(isoStr);
-  const now    = new Date();
-  const today  = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diff   = Math.round((target - today) / 86400000);
+  const diff   = dayDiff(isoStr);
   const time   = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   if (diff === 0) return `Aujourd'hui · ${time}`;
   if (diff === 1) return `Demain · ${time}`;
@@ -69,7 +94,7 @@ function cleanTitle(summary, type) {
 
 function badge(daysUntil, type) {
   if (type === "deadline") {
-    if (daysUntil === 0) return "Aujourd'hui";
+    if (daysUntil <= 0) return "Aujourd'hui";
     if (daysUntil === 1) return "J-1";
     return `J-${daysUntil}`;
   }
@@ -79,7 +104,10 @@ function badge(daysUntil, type) {
 function tsLabel(isoStr) {
   if (!isoStr) return "";
   const diff = Math.round((Date.now() - new Date(isoStr)) / 60000);
-  return diff < 2 ? "À l'instant" : `Il y a ${diff} min`;
+  if (diff < 2)  return "À l'instant";
+  if (diff < 60) return `Il y a ${diff} min`;
+  const h = Math.floor(diff / 60);
+  return h < 24 ? `Il y a ${h} h` : `Il y a ${Math.floor(h / 24)} j`;
 }
 
 // Calcule badge + whenLabel pour le chip prochain événement
@@ -88,7 +116,7 @@ function nextEventTiming(startIso, endIso) {
   const end   = endIso ? new Date(endIso) : null;
   const now   = new Date();
   const minutesUntil = Math.round((start - now) / 60000);
-  const daysUntil    = Math.round((start - now) / 86400000);
+  const daysUntil    = dayDiff(startIso);
   const timeStr = fmtTime(start);
   const endStr  = end ? ` – ${fmtTime(end)}` : "";
 
@@ -203,6 +231,7 @@ const CARD_STYLES = `
   .event-code { font-size: 10px; font-weight: 700; font-family: monospace;
                 padding: 1px 5px; border-radius: 4px; letter-spacing: .4px; flex-shrink: 0; }
   .event-badge { font-size: 11px; padding: 2px 7px; border-radius: 12px; flex-shrink: 0; font-weight: 500; }
+  .event-type { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
   .rendu-mark { font-size: 10px; flex-shrink: 0; }
   .empty { padding: 20px 16px; font-size: 13px; color: var(--secondary-text-color); text-align: center; }
 
@@ -211,7 +240,7 @@ const CARD_STYLES = `
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 16px; border-top: 1px solid var(--divider-color); font-size: 11px;
   }
-  .footer-link { color: var(--primary-color); cursor: pointer; }
+  .footer-link { color: var(--primary-color); cursor: pointer; text-decoration: none; }
   .footer-ts   { color: var(--secondary-text-color); }
   .footer-refresh {
     background: none; border: none; cursor: pointer; padding: 0;
@@ -256,11 +285,11 @@ class BrightspaceAgendaCard extends HTMLElement {
     const chipLabel  = isSession ? "Prochaine live session" : "Prochain atelier";
 
     const { chipBadge, whenLabel } = nextEventTiming(next.start_iso, next.end_iso);
-    const title   = cleanTitle(next.summary, next.type);
-    const subject = next.subject ?? "";
+    const title   = esc(cleanTitle(next.summary, next.type));
+    const subject = esc(next.subject ?? "");
 
     const joinBtn = appUrl
-      ? `<a class="next-chip-join" href="${appUrl}" target="_blank" rel="noopener"
+      ? `<a class="next-chip-join" href="${esc(appUrl)}" target="_blank" rel="noopener"
             style="background:${color}" onclick="event.stopPropagation()">
            ▶ Rejoindre
          </a>`
@@ -286,14 +315,18 @@ class BrightspaceAgendaCard extends HTMLElement {
   _statsBlock(attrs) {
     const keys = (this._config.stats ?? DEFAULT_STATS).filter(k => STAT_META[k]);
     if (!keys.length) return "";
-    const hasStat = keys.some(k => k in attrs && attrs[k] !== undefined);
+    const hasStat = ["a_venir", "individuels", "collectifs", "urgents", "devoirs"]
+      .some(k => attrs[k] !== undefined);
     if (!hasStat) {
       return `<div class="stat-warn">⚠️ Métriques indisponibles — mets à jour api.php et redémarre HA.</div>`;
     }
     const cols  = Math.min(keys.length, 4);
     const tiles = keys.map(k => {
       const meta   = STAT_META[k];
-      const val    = attrs[k] ?? 0;
+      // "devoirs" n'existe qu'avec un api.php récent : repli sur individuels + collectifs
+      const val    = k === "devoirs" && attrs.devoirs === undefined
+        ? (attrs.individuels ?? 0) + (attrs.collectifs ?? 0)
+        : (attrs[k] ?? 0);
       const urgent = k === "urgents" && val > 0;
       return `<div class="stat-tile">
         <span class="stat-label" style="color:${meta.color}">${meta.label}</span>
@@ -313,11 +346,18 @@ class BrightspaceAgendaCard extends HTMLElement {
     return `<div class="event-list">${visible.map(ev => {
       const meta    = TYPE_META[ev.type] ?? TYPE_META.event;
       const isRendu = !!ev.rendu;
-      const title   = cleanTitle(ev.summary, ev.type);
+      const title   = esc(cleanTitle(ev.summary, ev.type));
       const code    = ev.course_code ?? ev.subject ?? null;
       const codeHtml = code
-        ? `<span class="event-code" style="background:${meta.bg};color:${meta.color}">${code}</span>`
+        ? `<span class="event-code" style="background:${meta.bg};color:${meta.color}">${esc(code)}</span>`
         : "";
+      // Type du devoir (individuel / collectif), fourni par api.php récent ; absent sinon
+      const dt = DEVOIR_TYPE_META[ev.devoir_type];
+      const typeHtml = dt
+        ? `<span class="event-type" style="background:${dt.bg};color:${dt.color}">${dt.label}</span>`
+        : "";
+      // Jours calendaires recalculés côté carte (days_until de l'API en repli)
+      const days = ev.start_iso ? dayDiff(ev.start_iso) : (ev.days_until ?? 0);
       const renduMark = isRendu
         ? `<span class="rendu-mark" style="color:#0d6e4f">✓</span>`
         : "";
@@ -329,11 +369,12 @@ class BrightspaceAgendaCard extends HTMLElement {
           <div class="event-sub">
             <span>${fmtDate(ev.start_iso)}</span>
             ${codeHtml}
+            ${typeHtml}
             ${renduMark}
           </div>
         </div>
         <span class="event-badge" style="background:${meta.bg};color:${meta.color}">
-          ${badge(ev.days_until ?? 0, ev.type)}
+          ${badge(days, ev.type)}
         </span>
       </div>`;
     }).join("")}</div>`;
@@ -352,36 +393,26 @@ class BrightspaceAgendaCard extends HTMLElement {
     const card = root.querySelector("ha-card");
 
     if (!stateObj) {
-      card.innerHTML = `<div class="error">Entité introuvable : ${this._config.entity}</div>`;
+      card.innerHTML = `<div class="error">Entité introuvable : ${esc(this._config.entity)}</div>`;
       return;
     }
 
+    // set hass() est appelé à chaque changement d'état de HA, toutes entités confondues :
+    // on ne reconstruit la carte que si le sensor, la config ou la minute ont changé.
+    const minute = Math.floor(Date.now() / 60000);
+    if (stateObj === this._lastState && this._config === this._lastConfig && minute === this._lastMinute) return;
+    this._lastState = stateObj; this._lastConfig = this._config; this._lastMinute = minute;
+
     const attrs      = stateObj.attributes ?? {};
     const events     = attrs.events ?? [];
-    const title      = this._config.title ?? "Brightspace Agenda";
-    const appUrl     = this._config.app_url ?? "";
+    const title      = esc(this._config.title ?? "Brightspace Agenda");
+    const appUrl     = safeUrl(this._config.app_url);
     const showNext   = this._config.show_next   !== false;
     const showStats  = this._config.show_stats  !== false;
     const showEvents = this._config.show_events !== false;
     const todayStr   = new Date().toLocaleDateString("fr-FR",
                          { weekday: "short", day: "numeric", month: "short" });
     const ts = tsLabel(attrs.generated_at);
-
-    // Bouton refresh — appelle homeassistant.update_entity sur le sensor
-    const refreshBtn = card.querySelector("#refresh-btn");
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", async () => {
-        refreshBtn.classList.add("spinning");
-        try {
-          await this._hass.callService("homeassistant", "update_entity", {
-            entity_id: this._config.entity,
-          });
-        } finally {
-          // Retire le spin après 1.5s pour laisser le temps au sensor de se mettre à jour
-          setTimeout(() => refreshBtn.classList.remove("spinning"), 1500);
-        }
-      });
-    }
 
     // Le chip prochain événement n'a de sens que si show_events ou show_next activés
     const nextHtml = showNext ? this._nextBlock(events, appUrl) : "";
@@ -402,7 +433,7 @@ class BrightspaceAgendaCard extends HTMLElement {
       ${showEvents ? this._eventsBlock(events) : ""}
       <div class="footer">
         ${appUrl
-          ? `<span class="footer-link" onclick="window.open('${appUrl}','_blank')">Ouvrir l'agenda ↗</span>`
+          ? `<a class="footer-link" href="${esc(appUrl)}" target="_blank" rel="noopener">Ouvrir l'agenda ↗</a>`
           : `<span></span>`}
         <div style="display:flex;align-items:center;gap:10px">
           <span class="footer-ts">${ts}</span>
@@ -411,6 +442,26 @@ class BrightspaceAgendaCard extends HTMLElement {
           </button>
         </div>
       </div>`;
+
+    // Bouton refresh : appelle homeassistant.update_entity sur le sensor.
+    // À brancher APRÈS le innerHTML ci-dessus, qui recrée le bouton à chaque rendu
+    // (branché avant, l'écouteur partait avec l'ancien bouton et le clic ne faisait rien).
+    const refreshBtn = card.querySelector("#refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", async () => {
+        refreshBtn.classList.add("spinning");
+        try {
+          await this._hass.callService("homeassistant", "update_entity", {
+            entity_id: this._config.entity,
+          });
+        } catch (_) {
+          // l'erreur éventuelle est déjà signalée par Home Assistant
+        } finally {
+          // Le rendu suivant recrée le bouton ; ce délai couvre le cas où rien ne change
+          setTimeout(() => refreshBtn.classList.remove("spinning"), 1500);
+        }
+      });
+    }
   }
 
   static getConfigElement() {
@@ -424,7 +475,7 @@ class BrightspaceAgendaCard extends HTMLElement {
       show_next:   true,
       show_stats:  true,
       show_events: true,
-      stats:       ["a_venir", "individuels", "collectifs", "urgents"],
+      stats:       ["devoirs", "individuels", "collectifs", "urgents"],
       app_url:     "",
     };
   }
@@ -516,14 +567,14 @@ class BrightspaceAgendaCardEditor extends HTMLElement {
 
         <div class="field">
           <label>Entité</label>
-          <input type="text" id="entity" value="${cfg.entity ?? ""}"
+          <input type="text" id="entity" value="${esc(cfg.entity ?? "")}"
                  placeholder="sensor.brightspace_agenda_evenements_a_venir" />
           <span class="hint">sensor exposé par l'intégration Brightspace Agenda</span>
         </div>
 
         <div class="field">
           <label>Titre</label>
-          <input type="text" id="title" value="${cfg.title ?? ""}" placeholder="Brightspace Agenda" />
+          <input type="text" id="title" value="${esc(cfg.title ?? "")}" placeholder="Brightspace Agenda" />
         </div>
 
         <div class="divider"></div>
@@ -575,7 +626,7 @@ class BrightspaceAgendaCardEditor extends HTMLElement {
 
         <div class="field">
           <label>Lien "Ouvrir l'agenda" <span style="font-weight:400">(optionnel)</span></label>
-          <input type="text" id="app_url" value="${cfg.app_url ?? ""}"
+          <input type="text" id="app_url" value="${esc(cfg.app_url ?? "")}"
                  placeholder="https://votre-serveur/index.html" />
           <span class="hint">Active aussi le bouton "Rejoindre" sur le prochain événement</span>
         </div>
@@ -614,7 +665,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c BRIGHTSPACE-AGENDA-CARD %c v1.4 chargée ",
+  "%c BRIGHTSPACE-AGENDA-CARD %c v1.5 chargée ",
   "background:#6366f1;color:#fff;padding:2px 4px;border-radius:3px 0 0 3px;font-weight:bold",
   "background:#1c1c1e;color:#a5b4fc;padding:2px 4px;border-radius:0 3px 3px 0"
 );

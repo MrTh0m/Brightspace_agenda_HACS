@@ -52,6 +52,9 @@ class BrightspaceUpcomingSensor(CoordinatorEntity[BrightspaceCoordinator], Senso
         return {
             # Métriques agrégées — utilisées par la card pour les chiffres clés
             "a_venir":      stats.get("a_venir", 0),
+            # Devoirs non rendus (api.php récent) ; absent avec un ancien api.php,
+            # la card retombe alors sur individuels + collectifs
+            **({"devoirs": stats["devoirs"]} if "devoirs" in stats else {}),
             "individuels":  stats.get("individuels", 0),
             "collectifs":   stats.get("collectifs", 0),
             "urgents":      stats.get("urgents", 0),

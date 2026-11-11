@@ -1,7 +1,7 @@
 {
   "domain": "brightspace_agenda",
   "name": "Brightspace Agenda",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "config_flow": true,
   "documentation": "https://github.com/MrTh0m/Brightspace_agenda_HACS",
   "issue_tracker": "https://github.com/MrTh0m/Brightspace_agenda_HACS/issues",

@@ -39,7 +39,20 @@ Ou en YAML manuel :
 type: custom:brightspace-agenda-card
 entity: sensor.brightspace_agenda_evenements_a_venir
 app_url: https://votre-serveur/    # optionnel — lien "Ouvrir l'agenda"
+stats: [devoirs, individuels, collectifs, urgents]   # optionnel — tuiles affichées
 ```
+
+Tuiles disponibles (`stats`) :
+
+| Clé | Tuile | Contenu |
+|---|---|---|
+| `devoirs` | Devoirs | Devoirs non rendus dans la fenêtre (= Individuels + Collectifs) |
+| `individuels` | Individuels | Devoirs individuels non rendus |
+| `collectifs` | Collectifs | Devoirs collectifs non rendus |
+| `urgents` | Urgents ≤7j | Devoirs non rendus à échéance dans 7 jours ou moins |
+| `a_venir` | Événements | Tous les événements de la fenêtre (devoirs, sessions, ateliers) |
+
+Les types individuel / collectif suivent ceux de l'application, y compris les types corrigés à la main (app v43+).
 
 ## Options
 
@@ -57,7 +70,12 @@ Paramètres → Appareils & Services → Brightspace Agenda → **Configurer** :
 
 | Attribut | Type | Description |
 |---|---|---|
-| `state` | int | Nombre d'événements à venir |
+| `state` | int | Nombre d'événements à venir (tous types) |
+| `a_venir` | int | Identique à `state` |
+| `devoirs` | int | Devoirs non rendus (présent si `api.php` est à jour) |
+| `individuels` | int | Devoirs individuels non rendus |
+| `collectifs` | int | Devoirs collectifs non rendus |
+| `urgents` | int | Devoirs non rendus à échéance ≤ 7 jours |
 | `events` | list | Liste des événements |
 | `generated_at` | ISO 8601 | Horodatage du dernier refresh |
 
@@ -68,14 +86,18 @@ Structure d'un événement :
   "uid":        "abc123",
   "summary":    "Rendu stratégie digitale",
   "type":       "deadline",
+  "devoir_type": "individuel",
   "start_iso":  "2026-06-25T23:59:00+02:00",
   "end_iso":    "2026-06-25T23:59:00+02:00",
   "days_until": 2,
-  "subject":    "Marketing"
+  "subject":    "Marketing",
+  "rendu":      false
 }
 ```
 
 Types : `deadline`, `session`, `workshop`, `event`.
+
+`devoir_type` vaut `individuel` ou `collectif` pour un devoir, `null` sinon. `days_until` est en jours calendaires (0 = aujourd'hui, 1 = demain).
 
 ## Automatisation exemple
 
@@ -103,3 +125,19 @@ action:
                     | first %}
         {{ ev.summary }} — {{ ev.start_iso[:10] }}
 ```
+
+## Notes de version
+
+### 1.3.0 · 11 novembre 2026
+
+Nécessite un `api.php` de Brightspace Agenda du 11/11/2026 ou plus récent pour les nouveautés ; reste compatible avec un `api.php` plus ancien.
+
+- **Correctif** : le bouton Actualiser de la card ne faisait rien (l'écouteur était branché sur un bouton aussitôt recréé par le rendu)
+- **Correctif** : les badges `J-n`, « Aujourd'hui » et « Demain » sont calculés en jours calendaires ; un événement du lendemain matin pouvait s'afficher « Aujourd'hui » la veille au soir
+- **Correctif** : les tuiles Individuels / Collectifs reflètent les vrais types de devoirs (correction côté `api.php`), types corrigés à la main inclus
+- Nouvelle tuile **Devoirs** (devoirs non rendus), par défaut à la place de « À venir » ; l'ancienne clé `a_venir` reste utilisable et s'affiche désormais **Événements**, ce qu'elle compte réellement
+- Pastille **Individuel / Collectif** sur chaque devoir de la liste
+- Nouvel attribut `devoirs` sur le sensor
+- Textes du calendrier et de la configuration échappés avant affichage ; `app_url` limité aux liens http(s)
+- La card n'est plus reconstruite à chaque changement d'état de Home Assistant, seulement quand le sensor change
+- « Il y a 600 min » devient « Il y a 10 h »
